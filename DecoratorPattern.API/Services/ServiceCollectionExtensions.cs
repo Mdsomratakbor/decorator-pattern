@@ -17,23 +17,46 @@ public static class ServiceCollectionExtensions
         Func<TInterface, IServiceProvider, TInterface> decorator)
         where TInterface : class
     {
-        // Get the current registration
-        var wrappedDescriptor = services.FirstOrDefault(x => x.ServiceType == typeof(TInterface));
+        // Match the container's default behavior: a single service resolve uses the last registration.
+        var wrappedDescriptor = services.LastOrDefault(x => x.ServiceType == typeof(TInterface));
         
         if (wrappedDescriptor == null)
         {
             throw new InvalidOperationException($"{typeof(TInterface).Name} is not registered");
         }
-
-        // Create a factory that creates decorated instances
-        var objectFactory = ActivatorUtilities.CreateFactory(wrappedDescriptor.ImplementationType!, Array.Empty<Type>());
         
-        services.Replace(ServiceDescriptor.Describe(
+        // Remove the existing registration
+        services.Remove(wrappedDescriptor);
+        
+        // Add the new decorated registration
+        services.Add(ServiceDescriptor.Describe(
             typeof(TInterface),
-            provider => decorator((TInterface)objectFactory(provider, Array.Empty<object?>()), provider),
+            provider => decorator(CreateInstance<TInterface>(provider, wrappedDescriptor), provider),
             wrappedDescriptor.Lifetime
         ));
 
         return services;
+    }
+
+    private static TInterface CreateInstance<TInterface>(IServiceProvider provider, ServiceDescriptor descriptor)
+        where TInterface : class
+    {
+        if (descriptor.ImplementationInstance is TInterface implementationInstance)
+        {
+            return implementationInstance;
+        }
+
+        if (descriptor.ImplementationFactory is not null)
+        {
+            return (TInterface)descriptor.ImplementationFactory(provider);
+        }
+
+        if (descriptor.ImplementationType is not null)
+        {
+            return (TInterface)ActivatorUtilities.CreateInstance(provider, descriptor.ImplementationType);
+        }
+
+        throw new InvalidOperationException(
+            $"Unable to decorate {typeof(TInterface).Name} because the existing registration has no implementation.");
     }
 }
